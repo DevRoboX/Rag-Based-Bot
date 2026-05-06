@@ -1,0 +1,29 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment Variables (IMPORTANT: Do not leak API keys)
+.env
+
+# Vector Database (Local data, should not be in git)
+chroma_db/
+
+# Output Files
+output/
+
+# Personal Resume Files
+data/*.pdf
+data/*.docx
+data/*.txt
+*.pdf
+*.docx
+
+# OS specific
+.DS_Store
+Thumbs.db

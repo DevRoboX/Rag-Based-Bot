@@ -177,15 +177,15 @@ with st.sidebar:
                 key="dl_filled",
             )
 
-    # Download Q&A log (if it exists) ── NEW FEATURE ────────────────────
+    # Download Q&A Report (if it exists) ── generated on "export to excel" command
     if os.path.exists(QA_LOG_PATH):
-        st.markdown("### Q&A Log Excel")
-        st.caption("Auto-updated after every question you ask.")
+        st.markdown("### Client Q&A Report")
+        st.caption("Generated when you say 'export to excel' in chat.")
         with open(QA_LOG_PATH, "rb") as f:
             st.download_button(
-                label="Download Q&A Log",
+                label="Download Q&A Report (.xlsx)",
                 data=f,
-                file_name="qa_log.xlsx",
+                file_name="qa_report.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="dl_qa_log",
             )
@@ -229,9 +229,27 @@ if user_input:
     # Generate and display bot response
     with st.chat_message("assistant", avatar="🤖"):
         with st.spinner("Thinking..."):
-            response = st.session_state.bot.chat(user_input)
+            try:
+                response = st.session_state.bot.chat(user_input)
+            except Exception as e:
+                err = str(e)
+                if "rate_limit_exceeded" in err or "429" in err:
+                    import re
+                    wait = re.search(r"try again in (\S+)", err)
+                    wait_msg = f" Please wait **{wait.group(1)}** and try again." if wait else ""
+                    response = (
+                        "**Rate limit reached** - you've used up today's free token allowance on Groq.\n\n"
+                        f"{wait_msg}\n\n"
+                        "> **Tip:** The free tier resets every 24 hours. "
+                        "You can also upgrade at [console.groq.com/settings/billing](https://console.groq.com/settings/billing)."
+                    )
+                    st.session_state.memory.save(user_input, response)
+                else:
+                    response = f"**Error:** {err}"
+                    st.session_state.memory.save(user_input, response)
         st.markdown(response)
 
-    # Refresh sidebar download button if Excel was just filled
-    if os.path.exists(EXCEL_OUTPUT_PATH):
+    # Refresh sidebar download button if Excel or Q&A log was just updated
+    if os.path.exists(EXCEL_OUTPUT_PATH) or os.path.exists(QA_LOG_PATH):
         st.rerun()
+

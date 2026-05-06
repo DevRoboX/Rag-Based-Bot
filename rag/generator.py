@@ -20,10 +20,16 @@ WHY TEMPERATURE = 0:
   No creativity, no variation — just accurate extraction.
 """
 
+import os
+from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.prompts import PromptTemplate
 from config import GROQ_MODEL
+
+# Force reload .env every time this module is imported so new API keys
+# are picked up immediately without restarting the process
+load_dotenv(override=True)
 
 
 # ─── Conversational Q&A Prompt ──────────────────────────────────────────────

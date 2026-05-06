@@ -26,27 +26,31 @@ from excel.reader import get_all_fields, get_section_fields
 from excel.mapper import fields_to_answers
 from excel.writer import fill_excel
 from config import EXCEL_TEMPLATE_PATH, EXCEL_OUTPUT_PATH, QA_LOG_PATH
-from excel.qa_logger import log_qa_to_excel
+from excel.qa_logger import export_session_to_excel
 
 HELP_TEXT = """
-🤖 **Resume RAG Bot — What I can do:**
+**Resume RAG Bot - What I can do:**
 
-📋 **Ask me anything about your resume:**
+**Ask me anything about your resume:**
    - "What are my technical skills?"
    - "List all companies I've worked at"
    - "What is my highest qualification?"
    - "Tell me about my projects"
 
-📊 **Fill the Excel sheet:**
+**Fill the Excel sheet:**
    - "Fill the entire Excel sheet"
    - "Fill my skills section in Excel"
    - "Populate the education section"
-   - "Fill contact details in Excel"
 
-🔄 **Reload resume data:**
+**Export your Q&A session to Excel:**
+   - "Export to Excel"
+   - "Save my Q&A"
+   - "Export chat"
+
+**Reload resume data:**
    - "Reload my resume" (re-runs ingestion)
 
-❓ **Get help:**
+**Get help:**
    - "Help" / "What can you do?"
 """.strip()
 
@@ -94,6 +98,9 @@ class ResumeBot:
         if intent.type == "QA":
             return self._handle_qa(intent.raw_query)
 
+        if intent.type == "EXPORT_QA":
+            return self._handle_export_qa()
+
         if intent.type == "FILL_ALL":
             return self._handle_fill_excel(section=None)
 
@@ -105,18 +112,47 @@ class ResumeBot:
     # ─── Action Handlers ─────────────────────────────────────────────────────
 
     def _handle_qa(self, question: str) -> str:
-        """Direct Q&A — retrieve from RAG, log to Excel, and return answer."""
+        """Direct Q&A — retrieve from RAG and return answer."""
         result = self.rag.query(question)
-        answer = result["answer"]
+        return result["answer"]
 
-        # ── Auto-log Q&A to Excel (new feature) ──────────────────────────────
+    def _handle_export_qa(self) -> str:
+        """
+        Export all Q&A pairs from the current session to Excel.
+        Reads user+assistant pairs from memory and writes a formatted file.
+        """
+        # Extract Q&A pairs from memory (user msg + next assistant msg)
+        qa_pairs = []
+        messages = self.memory.messages
+        for i in range(0, len(messages) - 1, 2):
+            user_msg = messages[i]
+            bot_msg  = messages[i + 1]
+            # Only include actual Q&A turns (not export/fill commands)
+            if user_msg["role"] == "user" and bot_msg["role"] == "assistant":
+                question = user_msg["content"]
+                answer   = bot_msg["content"]
+                # Skip non-QA intents (help, fill, export commands themselves)
+                from agent.intent import detect_intent
+                if detect_intent(question).type == "QA":
+                    qa_pairs.append((question, answer))
+
+        if not qa_pairs:
+            return (
+                "No Q&A questions found in this session yet.\n"
+                "Ask me some questions about your resume first, then say 'export to excel'!"
+            )
+
         try:
-            log_qa_to_excel(question, answer, QA_LOG_PATH)
+            import os
+            os.makedirs(os.path.dirname(QA_LOG_PATH) or ".", exist_ok=True)
+            count = export_session_to_excel(qa_pairs, QA_LOG_PATH)
+            return (
+                f"**Exported {count} Q&A pairs to Excel!**\n\n"
+                f"- File saved to: `{QA_LOG_PATH}`\n"
+                f"- Download it from the **sidebar** on the left."
+            )
         except Exception as e:
-            print(f"[!] Q&A log warning: {e}")  # Non-fatal — don't crash chat
-        # ─────────────────────────────────────────────────────────────────────
-
-        return answer
+            return f"Export failed: {e}"
 
     def _handle_fill_excel(self, section: str | None) -> str:
         """

@@ -1,111 +1,161 @@
 """
-excel/qa_logger.py — Auto Q&A Excel Logger
+excel/qa_logger.py — Client Q&A Report Generator
 
-WHAT IT DOES:
-  Every time the user asks a question and gets an answer from the RAG bot,
-  this module appends a new row to a running Excel log:
+PURPOSE:
+  When the user says "export to excel", this creates a professional
+  2-column Excel report from all questions asked in the chat session:
 
-      | Question                          | Answer                        |
-      |-----------------------------------|-------------------------------|
-      | What are my technical skills?     | Python, React, SQL, Docker... |
-      | What is my highest degree?        | B.Tech in Computer Science    |
+      Column A  →  Question  (what the client asked)
+      Column B  →  Answer    (what the bot answered from the data)
 
-  The file grows with every chat exchange — one row per Q&A pair.
-  The user can download this log from the Streamlit sidebar at any time.
+  This is the PRIMARY deliverable — a clean, client-ready report.
 
-WHY A SEPARATE FILE (not the resume template):
-  - Keeps the existing Excel fill feature untouched
-  - This log is purely additive — a living record of every question asked
-  - Makes it easy to export a session's Q&A for sharing or review
+WORKFLOW:
+  1. User asks questions to the bot in chat
+  2. User types: "export to excel"
+  3. This module reads all Q&A pairs from the session memory
+  4. Creates a formatted Excel file saved to output/qa_report.xlsx
+  5. Download button appears in the sidebar
+
+NOTE:
+  This replaces the fixed-template approach. The data source (resume/PDF)
+  can be swapped — the pipeline stays the same, only the PDF changes.
 """
 
 import os
 from datetime import datetime
 import openpyxl
-from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-
-
-# ── Style constants ───────────────────────────────────────────────────────────
-HEADER_FILL   = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
-HEADER_FONT   = Font(bold=True, color="FFFFFF", size=11)
-Q_FILL        = PatternFill(start_color="EEF2FF", end_color="EEF2FF", fill_type="solid")
-A_FILL        = PatternFill(start_color="F0FDF4", end_color="F0FDF4", fill_type="solid")
-Q_FONT        = Font(bold=True, color="3730A3", size=10)
-A_FONT        = Font(bold=False, color="166534", size=10)
-THIN_BORDER   = Border(
-    bottom=Side(style="thin", color="E5E7EB"),
-    left=Side(style="thin",   color="E5E7EB"),
-    right=Side(style="thin",  color="E5E7EB"),
+from openpyxl.styles import (
+    PatternFill, Font, Alignment, Border, Side, GradientFill
 )
-WRAP_ALIGN    = Alignment(vertical="center", wrap_text=True, horizontal="left")
-CENTER_ALIGN  = Alignment(vertical="center", horizontal="center")
+from openpyxl.utils import get_column_letter
 
 
-def _create_fresh_workbook(filepath: str) -> openpyxl.Workbook:
-    """Create a brand-new Q&A log workbook with styled headers."""
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Q&A Log"
-
-    # Column widths
-    ws.column_dimensions["A"].width = 5   # Row #
-    ws.column_dimensions["B"].width = 55  # Question
-    ws.column_dimensions["C"].width = 75  # Answer
-    ws.column_dimensions["D"].width = 22  # Timestamp
-
-    # Header row
-    headers = ["#", "Question", "Answer", "Timestamp"]
-    for col, title in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col, value=title)
-        cell.fill      = HEADER_FILL
-        cell.font      = HEADER_FONT
-        cell.alignment = CENTER_ALIGN
-    ws.row_dimensions[1].height = 26
-
-    os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
-    wb.save(filepath)
-    return wb
+# ─── Color Palette ──────────────────────────────────────────────────────────
+COLOR_BRAND_DARK   = "1E3A5F"   # Deep navy — title bar
+COLOR_BRAND_MAIN   = "2563EB"   # Blue — question header
+COLOR_BRAND_ACCENT = "059669"   # Green — answer header
+COLOR_Q_ROW_ODD    = "EFF6FF"   # Light blue — question cells (odd rows)
+COLOR_Q_ROW_EVEN   = "DBEAFE"   # Slightly darker blue (even rows)
+COLOR_A_ROW_ODD    = "F0FDF4"   # Light green — answer cells (odd rows)
+COLOR_A_ROW_EVEN   = "DCFCE7"   # Slightly darker green (even rows)
+COLOR_BORDER       = "CBD5E1"   # Subtle grey border
 
 
-def log_qa_to_excel(question: str, answer: str, filepath: str) -> None:
+def _make_border(color: str = COLOR_BORDER) -> Border:
+    side = Side(style="thin", color=color)
+    return Border(top=side, bottom=side, left=side, right=side)
+
+
+def _make_thick_bottom(color: str = COLOR_BORDER) -> Border:
+    return Border(
+        top=Side(style="thin", color=color),
+        bottom=Side(style="medium", color="94A3B8"),
+        left=Side(style="thin", color=color),
+        right=Side(style="thin", color=color),
+    )
+
+
+def export_session_to_excel(qa_pairs: list[tuple[str, str]], filepath: str) -> int:
     """
-    Append one Q&A pair as a new row in the log Excel file.
+    Create a professional 2-column Q&A report Excel file.
 
-    Creates the file with headers if it doesn't exist yet.
+    Layout:
+        Row 1       : Merged title bar  (Company/project name + date)
+        Row 2       : Column headers    (Question | Answer)
+        Row 3+      : Data rows         (one Q&A pair per row)
 
     Args:
-        question : The user's question string
-        answer   : The bot's answer string
-        filepath : Path to the Q&A log Excel file (from config.QA_LOG_PATH)
+        qa_pairs  : List of (question, answer) tuples from the chat session
+        filepath  : Save path (from config.QA_LOG_PATH)
+
+    Returns:
+        Number of Q&A rows written
     """
-    # Load existing workbook or create a new one
-    if os.path.exists(filepath):
-        wb = openpyxl.load_workbook(filepath)
-        ws = wb.active
-    else:
-        _create_fresh_workbook(filepath)
-        wb = openpyxl.load_workbook(filepath)
-        ws = wb.active
+    if not qa_pairs:
+        return 0
 
-    # Next row index (skip header row 1)
-    next_row = ws.max_row + 1
-    row_num  = next_row - 1  # Row number shown to user (1-based, excluding header)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
 
-    data = [row_num, question, answer, timestamp]
-    fills = [None, Q_FILL, A_FILL, None]
-    fonts = [None, Q_FONT, A_FONT, None]
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Q&A Report"
 
-    for col, (value, fill, font) in enumerate(zip(data, fills, fonts), start=1):
-        cell = ws.cell(row=next_row, column=col, value=value)
-        cell.border    = THIN_BORDER
-        cell.alignment = WRAP_ALIGN if col in (2, 3) else CENTER_ALIGN
-        if fill:
-            cell.fill = fill
-        if font:
-            cell.font = font
+    # ── Column widths ─────────────────────────────────────────────────────────
+    ws.column_dimensions["A"].width = 52   # Question column
+    ws.column_dimensions["B"].width = 78   # Answer column
 
-    ws.row_dimensions[next_row].height = 60  # Tall enough for wrapped text
+    # ── ROW 1: Title bar ─────────────────────────────────────────────────────
+    ws.merge_cells("A1:B1")
+    title_cell = ws["A1"]
+    date_str = datetime.now().strftime("%d %B %Y")
+    title_cell.value = f"Client Q&A Report  |  Generated on {date_str}"
+    title_cell.font = Font(
+        name="Calibri", bold=True, size=14, color="FFFFFF"
+    )
+    title_cell.fill = PatternFill(
+        start_color=COLOR_BRAND_DARK,
+        end_color=COLOR_BRAND_DARK,
+        fill_type="solid"
+    )
+    title_cell.alignment = Alignment(
+        horizontal="center", vertical="center"
+    )
+    ws.row_dimensions[1].height = 36
+
+    # ── ROW 2: Column headers ─────────────────────────────────────────────────
+    header_data = [
+        ("A", "Question", COLOR_BRAND_MAIN),
+        ("B", "Answer",   COLOR_BRAND_ACCENT),
+    ]
+    for col_letter, label, color in header_data:
+        cell = ws[f"{col_letter}2"]
+        cell.value = label
+        cell.font = Font(name="Calibri", bold=True, size=12, color="FFFFFF")
+        cell.fill = PatternFill(
+            start_color=color, end_color=color, fill_type="solid"
+        )
+        cell.alignment = Alignment(
+            horizontal="center", vertical="center"
+        )
+        cell.border = _make_thick_bottom()
+    ws.row_dimensions[2].height = 30
+
+    # ── ROW 3+: Data rows ─────────────────────────────────────────────────────
+    wrap_align = Alignment(vertical="top", wrap_text=True, horizontal="left")
+
+    for idx, (question, answer) in enumerate(qa_pairs):
+        row = idx + 3          # Data starts at row 3
+        is_odd = (idx % 2 == 0)
+
+        q_color = COLOR_Q_ROW_ODD  if is_odd else COLOR_Q_ROW_EVEN
+        a_color = COLOR_A_ROW_ODD  if is_odd else COLOR_A_ROW_EVEN
+
+        # Column A — Question
+        q_cell = ws.cell(row=row, column=1, value=question)
+        q_cell.font      = Font(name="Calibri", size=11, color="1E3A5F", bold=True)
+        q_cell.fill      = PatternFill(start_color=q_color, end_color=q_color, fill_type="solid")
+        q_cell.alignment = wrap_align
+        q_cell.border    = _make_border()
+
+        # Column B — Answer
+        a_cell = ws.cell(row=row, column=2, value=answer)
+        a_cell.font      = Font(name="Calibri", size=11, color="1A3C2B")
+        a_cell.fill      = PatternFill(start_color=a_color, end_color=a_color, fill_type="solid")
+        a_cell.alignment = wrap_align
+        a_cell.border    = _make_border()
+
+        # Row height — scale with content length
+        max_chars = max(len(question), len(answer))
+        row_height = min(max(40, max_chars // 3), 200)
+        ws.row_dimensions[row].height = row_height
+
+    # ── Freeze header rows so they stay visible when scrolling ───────────────
+    ws.freeze_panes = "A3"   # Freeze title + header rows
+
+    # ── Auto-filter on header row ─────────────────────────────────────────────
+    ws.auto_filter.ref = f"A2:B{len(qa_pairs) + 2}"
 
     wb.save(filepath)
-    print(f"[OK] Q&A logged to Excel (row {row_num})")
+    print(f"[OK] Client Q&A report saved: {filepath} ({len(qa_pairs)} rows)")
+    return len(qa_pairs)

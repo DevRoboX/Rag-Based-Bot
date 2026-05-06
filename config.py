@@ -18,7 +18,7 @@ load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # Model to use from Groqs
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "llama-3.1-8b-instant"   # Fast + token-efficient for resume Q&A
 
 # ─────────────────────────────────────────────
 # EMBEDDING MODEL SETTINGS
@@ -39,8 +39,8 @@ CHROMA_COLLECTION_NAME = "resume_data"
 DATA_DIR = "./data"
 EXCEL_TEMPLATE_PATH = "./data/excel_template.xlsx"
 EXCEL_OUTPUT_PATH = "./output/filled_resume.xlsx"
-# Auto-generated Q&A log — one row appended per chat question
-QA_LOG_PATH = "./output/qa_log.xlsx"
+# Client Q&A report — generated on demand when user says "export to excel"
+QA_LOG_PATH = "./output/qa_report.xlsx"
 
 # ─────────────────────────────────────────────
 # RAG SETTINGS
